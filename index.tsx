@@ -1,0 +1,985 @@
+import React, { useState, useEffect, useRef } from "react";
+import { Check, Flag, Pencil, Archive, RotateCcw, Trash2, Plus, X, ArrowUp, ChevronDown, ChevronRight } from "lucide-react";
+
+const COLORS = {
+  bg: "#161D27",
+  bgGradient: "radial-gradient(ellipse 90% 60% at 50% -10%, #243044 0%, #161D27 55%)",
+  surface: "#1F2733",
+  surface2: "#28323F",
+  line: "#34404F",
+  lineSoft: "#2A3340",
+  text: "#EFE8D9",
+  textDim: "#94A3B5",
+  textFaint: "#5E6E81",
+  amber: "#E8A33D",
+  amberSoft: "#F2C078",
+  green: "#6FA287",
+  red: "#C2664F",
+};
+
+const DISPLAY_FONT = "'Iowan Old Style','Palatino Linotype','Georgia',ui-serif,serif";
+const MONO_FONT = "'SF Mono','JetBrains Mono',ui-monospace,'Menlo',monospace";
+const SANS_FONT = "ui-sans-serif,-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif";
+
+const GLOBAL_CSS = `
+@keyframes sidingFadeUp { from { opacity:0; transform:translateY(8px); } to { opacity:1; transform:translateY(0); } }
+@keyframes sidingFadeIn { from { opacity:0; } to { opacity:1; } }
+@keyframes sidingSheetUp { from { opacity:0; transform:translateY(28px); } to { opacity:1; transform:translateY(0); } }
+@keyframes sidingPopIn { from { opacity:0; transform:scale(0.96) translateY(6px); } to { opacity:1; transform:scale(1) translateY(0); } }
+@keyframes sidingFlip { 0% { transform:rotateX(90deg); opacity:0.3; } 60% { transform:rotateX(-8deg); opacity:1; } 100% { transform:rotateX(0deg); opacity:1; } }
+@keyframes sidingDot { 0%, 60%, 100% { transform:translateY(0); opacity:0.4; } 30% { transform:translateY(-4px); opacity:1; } }
+@keyframes sidingGlow { 0%, 100% { box-shadow:0 8px 28px rgba(232,163,61,0.22), 0 2px 6px rgba(0,0,0,0.3); } 50% { box-shadow:0 10px 34px rgba(232,163,61,0.34), 0 2px 6px rgba(0,0,0,0.3); } }
+
+.sd-fade-up { animation: sidingFadeUp 0.45s cubic-bezier(0.22,1,0.36,1) both; }
+.sd-pop { animation: sidingPopIn 0.3s cubic-bezier(0.22,1,0.36,1) both; }
+.sd-bubble { animation: sidingFadeUp 0.32s cubic-bezier(0.22,1,0.36,1) both; }
+.sd-backdrop { animation: sidingFadeIn 0.25s ease both; }
+.sd-sheet { animation: sidingSheetUp 0.38s cubic-bezier(0.16,1,0.3,1) both; }
+.sd-flip { animation: sidingFlip 0.5s cubic-bezier(0.22,1,0.36,1) both; transform-origin: center; backface-visibility: hidden; }
+.sd-cta { animation: sidingGlow 3.2s ease-in-out infinite; transition: transform 0.15s ease, box-shadow 0.15s ease; }
+.sd-cta:active { transform: scale(0.98); }
+
+.sd-btn { transition: background 0.15s ease, color 0.15s ease, border-color 0.15s ease, transform 0.1s ease, opacity 0.15s ease; }
+.sd-btn:active { transform: scale(0.95); }
+.sd-btn:disabled { cursor: not-allowed; }
+.sd-card { transition: border-color 0.2s ease, background 0.2s ease; }
+.sd-row-actions button { transition: background 0.15s ease, border-color 0.15s ease, color 0.15s ease, transform 0.1s ease; }
+.sd-row-actions button:active { transform: scale(0.94); }
+.sd-input { transition: border-color 0.15s ease, box-shadow 0.15s ease; }
+.sd-input:focus { border-color: ${COLORS.amber} !important; box-shadow: 0 0 0 3px rgba(232,163,61,0.15); }
+.sd-link-btn { transition: color 0.15s ease, transform 0.1s ease; }
+.sd-link-btn:active { transform: scale(0.96); }
+.sd-cat-btn { transition: background 0.15s ease, color 0.15s ease, transform 0.1s ease; }
+.sd-cat-btn:active { transform: scale(0.94); }
+.sd-archived-row { animation: sidingFadeUp 0.3s cubic-bezier(0.22,1,0.36,1) both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .sd-fade-up, .sd-pop, .sd-bubble, .sd-backdrop, .sd-sheet, .sd-flip, .sd-cta, .sd-archived-row { animation: none !important; }
+}
+`;
+
+const SYS_ONBOARD = `You are helping someone build a personal backlog of goals, projects, and interests to fill their free time with intention. They struggle with: they complete their daily tasks, then have free time and genuinely don't know what to do with it. They also don't have a clear list of goals already.
+
+Ask short, conversational questions (one at a time, casual tone, no corporate-speak) to draw out: things they've half-thought about trying, skills they're curious about, projects they've started and dropped, hobbies, fitness/health interests, anything resembling a creative or technical itch. Keep it light, max 5-6 questions. Once you sense you have enough (after a few exchanges), STOP asking questions and instead respond with ONLY a JSON object (no markdown fences, no prose) in this exact shape:
+{"done": true, "lines": [{"title": "...", "category": "...", "note": "one sentence on why/how to start"}, ...]}
+Generate 5-8 lines. Categories should be short single words like "Build", "Learn", "Move", "Make", "Explore". Until you're done, respond with ONLY your next question as plain text, nothing else - no JSON, no labels.`;
+
+const SYS_CHECKIN = `You are a calm, direct check-in companion called Siding. The person just finished their obligations and has free time but doesn't know what to do with it. You're given their current list of "lines" (goals/projects) as JSON, including category, note, status, and days since last touched.
+
+Pick 1-3 good options for right now given the mix (don't always pick the stalest one - sometimes a quick win is better than a guilt trip). Be specific about a tiny first action, not just "work on X". Conversational, brief, a little warm, no bullet-point lists, no corporate tone, 3-5 sentences max. If they reply, keep chatting naturally and help them actually get started.`;
+
+async function callClaude(messages, system) {
+  try {
+    const res = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, system, messages }),
+    });
+    if (!res.ok) throw new Error("Request failed: " + res.status);
+    const data = await res.json();
+    const text = (data.content || []).map((b) => b.text || "").join("\n").trim();
+    if (!text) throw new Error("Empty response");
+    return text;
+  } catch (e) {
+    return "__ERROR__";
+  }
+}
+
+function tryParseLines(text) {
+  const clean = text.replace(/```json|```/g, "").trim();
+  try {
+    const parsed = JSON.parse(clean);
+    if (parsed && parsed.done && Array.isArray(parsed.lines)) return parsed.lines;
+  } catch (e) {}
+  return null;
+}
+
+function daysSince(iso) {
+  if (!iso) return 999;
+  const diff = Date.now() - new Date(iso).getTime();
+  return Math.floor(diff / 86400000);
+}
+
+function statusFor(line) {
+  const d = daysSince(line.lastTouched);
+  if (d <= 1) return { label: "ROLLING", color: COLORS.green };
+  if (d <= 6) return { label: "IDLE", color: COLORS.amber };
+  return { label: "STALLED", color: COLORS.red };
+}
+
+async function loadLines() {
+  try {
+    const r = await window.storage.get("siding:lines");
+    return r ? JSON.parse(r.value) : [];
+  } catch (e) {
+    return [];
+  }
+}
+async function saveLines(lines) {
+  try {
+    await window.storage.set("siding:lines", JSON.stringify(lines));
+  } catch (e) {}
+}
+async function loadOnboarded() {
+  try {
+    const r = await window.storage.get("siding:onboarded");
+    return r ? JSON.parse(r.value) === true : false;
+  } catch (e) {
+    return false;
+  }
+}
+async function saveOnboarded(val) {
+  try {
+    await window.storage.set("siding:onboarded", JSON.stringify(val));
+  } catch (e) {}
+}
+
+function TypingDots() {
+  return (
+    <div style={{ display: "flex", gap: 4, alignItems: "center", padding: "6px 2px" }}>
+      {[0, 1, 2].map((i) => (
+        <div
+          key={i}
+          style={{
+            width: 5,
+            height: 5,
+            borderRadius: 1,
+            background: COLORS.amber,
+            animation: `sidingDot 1.1s ease-in-out ${i * 0.15}s infinite`,
+          }}
+        />
+      ))}
+    </div>
+  );
+}
+
+function Bubble({ role, content }) {
+  return (
+    <div
+      className="sd-bubble"
+      style={{
+        alignSelf: role === "user" ? "flex-end" : "flex-start",
+        maxWidth: "88%",
+        background: role === "user" ? COLORS.surface2 : COLORS.surface,
+        border: `1px solid ${role === "user" ? COLORS.line : COLORS.lineSoft}`,
+        borderRadius: role === "user" ? "14px 14px 4px 14px" : "14px 14px 14px 4px",
+        padding: "11px 15px",
+        fontSize: 15,
+        lineHeight: 1.55,
+        wordBreak: "break-word",
+        boxShadow: "0 1px 2px rgba(0,0,0,0.15)",
+      }}
+    >
+      {content}
+    </div>
+  );
+}
+
+function ChatInput({ value, onChange, onSend, loading, placeholder }) {
+  return (
+    <div style={{ display: "flex", gap: 8, paddingTop: 10 }}>
+      <input
+        className="sd-input"
+        value={value}
+        onChange={(e) => onChange(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === "Enter") onSend();
+        }}
+        placeholder={placeholder}
+        style={{
+          flex: 1,
+          minWidth: 0,
+          background: COLORS.surface,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 24,
+          padding: "12px 16px",
+          color: COLORS.text,
+          fontSize: 16,
+          outline: "none",
+        }}
+      />
+      <button
+        className="sd-btn"
+        onClick={onSend}
+        disabled={loading}
+        style={{
+          background: loading ? COLORS.surface2 : COLORS.amber,
+          color: loading ? COLORS.textFaint : "#1B2430",
+          border: "none",
+          borderRadius: "50%",
+          width: 44,
+          height: 44,
+          flexShrink: 0,
+          cursor: loading ? "default" : "pointer",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+        aria-label="Send"
+      >
+        <ArrowUp size={18} strokeWidth={2.5} />
+      </button>
+    </div>
+  );
+}
+
+function Onboard({ onComplete }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const scrollRef = useRef(null);
+  const started = useRef(false);
+
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    (async () => {
+      setLoading(true);
+      const reply = await callClaude([{ role: "user", content: "Let's begin." }], SYS_ONBOARD);
+      setMessages([
+        {
+          role: "assistant",
+          content:
+            reply === "__ERROR__"
+              ? "Couldn't reach Claude just now — check your connection and tap Send to retry."
+              : reply,
+        },
+      ]);
+      setLoading(false);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, loading]);
+
+  const send = async () => {
+    if (!input.trim() || loading) return;
+    const next = [...messages, { role: "user", content: input }];
+    setMessages(next);
+    setInput("");
+    setLoading(true);
+    const reply = await callClaude(next, SYS_ONBOARD);
+    if (reply === "__ERROR__") {
+      setMessages([...next, { role: "assistant", content: "Hmm, that didn't go through. Mind trying again?" }]);
+      setLoading(false);
+      return;
+    }
+    const lines = tryParseLines(reply);
+    if (lines && lines.length > 0) {
+      const withMeta = lines.map((l, i) => ({
+        id: "l" + Date.now() + "_" + i,
+        title: l.title,
+        category: l.category,
+        note: l.note,
+        lastTouched: null,
+        archived: false,
+        createdAt: new Date().toISOString(),
+      }));
+      setLoading(false);
+      onComplete(withMeta);
+    } else {
+      setMessages([...next, { role: "assistant", content: reply }]);
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div
+      style={{
+        maxWidth: 560,
+        margin: "0 auto",
+        padding: "calc(24px + env(safe-area-inset-top,0px)) 16px calc(12px + env(safe-area-inset-bottom,0px))",
+        display: "flex",
+        flexDirection: "column",
+        height: "100dvh",
+        boxSizing: "border-box",
+      }}
+    >
+      <div className="sd-fade-up" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
+        <div>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 27, fontWeight: 600, marginBottom: 5, letterSpacing: "-0.01em" }}>
+            Siding
+          </div>
+          <div style={{ color: COLORS.textDim, fontSize: 14, marginBottom: 16, maxWidth: 360, lineHeight: 1.4 }}>
+            Let's find a few lines worth running. Answer however you like.
+          </div>
+        </div>
+        <button
+          className="sd-link-btn"
+          onClick={() => onComplete([])}
+          style={{
+            fontFamily: MONO_FONT,
+            background: "none",
+            border: `1px solid ${COLORS.line}`,
+            color: COLORS.textDim,
+            borderRadius: 6,
+            padding: "8px 10px",
+            fontSize: 10,
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+            flexShrink: 0,
+          }}
+        >
+          SKIP
+        </button>
+      </div>
+      <div
+        ref={scrollRef}
+        style={{
+          flex: 1,
+          overflowY: "auto",
+          display: "flex",
+          flexDirection: "column",
+          gap: 14,
+          paddingBottom: 16,
+          WebkitOverflowScrolling: "touch",
+        }}
+      >
+        {messages.map((m, i) => (
+          <Bubble key={i} role={m.role} content={m.content} />
+        ))}
+        {loading && (
+          <div className="sd-bubble" style={{ alignSelf: "flex-start" }}>
+            <TypingDots />
+          </div>
+        )}
+      </div>
+      <ChatInput value={input} onChange={setInput} onSend={send} loading={loading} placeholder="Type your answer..." />
+    </div>
+  );
+}
+
+function CheckinPanel({ lines, onClose }) {
+  const [messages, setMessages] = useState([]);
+  const [input, setInput] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [closing, setClosing] = useState(false);
+  const scrollRef = useRef(null);
+  const started = useRef(false);
+
+  const boardSummary = JSON.stringify(
+    lines.map((l) => ({ title: l.title, category: l.category, note: l.note, daysSinceTouched: daysSince(l.lastTouched) }))
+  );
+
+  const requestClose = () => {
+    setClosing(true);
+    setTimeout(onClose, 180);
+  };
+
+  useEffect(() => {
+    if (started.current) return;
+    started.current = true;
+    (async () => {
+      setLoading(true);
+      const reply = await callClaude(
+        [{ role: "user", content: `Here's my current board: ${boardSummary}. I just got free time. What should I do?` }],
+        SYS_CHECKIN
+      );
+      setMessages([
+        { role: "assistant", content: reply === "__ERROR__" ? "Couldn't reach Claude — tap below to retry." : reply },
+      ]);
+      setLoading(false);
+    })();
+  }, []);
+
+  useEffect(() => {
+    if (scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [messages, loading]);
+
+  useEffect(() => {
+    const onKey = (e) => {
+      if (e.key === "Escape") requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  const send = async () => {
+    if (!input.trim() || loading) return;
+    const next = [...messages, { role: "user", content: input }];
+    setMessages(next);
+    setInput("");
+    setLoading(true);
+    const reply = await callClaude([{ role: "user", content: `My board: ${boardSummary}` }, ...next], SYS_CHECKIN);
+    setMessages([...next, { role: "assistant", content: reply === "__ERROR__" ? "That didn't go through — try again?" : reply }]);
+    setLoading(false);
+  };
+
+  return (
+    <div
+      className="sd-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) requestClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(10,13,18,0.6)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "flex-end",
+        justifyContent: "center",
+        zIndex: 50,
+        opacity: closing ? 0 : 1,
+        transition: "opacity 0.18s ease",
+      }}
+    >
+      <div
+        className="sd-sheet"
+        style={{
+          background: COLORS.bg,
+          backgroundImage: COLORS.bgGradient,
+          width: "100%",
+          maxWidth: 560,
+          height: "88dvh",
+          borderRadius: "20px 20px 0 0",
+          border: `1px solid ${COLORS.line}`,
+          borderBottom: "none",
+          display: "flex",
+          flexDirection: "column",
+          padding: "14px 16px calc(12px + env(safe-area-inset-bottom,0px))",
+          boxSizing: "border-box",
+          boxShadow: "0 -16px 48px rgba(0,0,0,0.4)",
+          transform: closing ? "translateY(16px)" : "none",
+          opacity: closing ? 0 : 1,
+          transition: "transform 0.18s ease, opacity 0.18s ease",
+        }}
+      >
+        <div style={{ width: 36, height: 4, borderRadius: 2, background: COLORS.line, margin: "0 auto 14px" }} />
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+          <div style={{ fontFamily: DISPLAY_FONT, fontSize: 20, fontWeight: 600 }}>Check-in</div>
+          <button
+            className="sd-btn"
+            onClick={requestClose}
+            style={{
+              background: COLORS.surface,
+              border: `1px solid ${COLORS.line}`,
+              color: COLORS.textDim,
+              borderRadius: "50%",
+              width: 32,
+              height: 32,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+            aria-label="Close"
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div
+          ref={scrollRef}
+          style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 14, WebkitOverflowScrolling: "touch" }}
+        >
+          {messages.map((m, i) => (
+            <Bubble key={i} role={m.role} content={m.content} />
+          ))}
+          {loading && (
+            <div className="sd-bubble" style={{ alignSelf: "flex-start" }}>
+              <TypingDots />
+            </div>
+          )}
+        </div>
+        <ChatInput value={input} onChange={setInput} onSend={send} loading={loading} placeholder="Reply..." />
+      </div>
+    </div>
+  );
+}
+
+const CATS = ["Build", "Learn", "Move", "Make", "Explore"];
+
+function CategoryPicker({ category, setCategory }) {
+  return (
+    <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+      {CATS.map((c) => (
+        <button
+          key={c}
+          className="sd-cat-btn"
+          onClick={() => setCategory(c)}
+          style={{
+            fontFamily: MONO_FONT,
+            background: category === c ? COLORS.amber : COLORS.surface2,
+            color: category === c ? "#1B2430" : COLORS.textDim,
+            border: `1px solid ${category === c ? COLORS.amber : COLORS.line}`,
+            borderRadius: 7,
+            padding: "8px 11px",
+            fontSize: 12,
+            cursor: "pointer",
+          }}
+        >
+          {c.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function AddLineModal({ onAdd, onClose }) {
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState("Build");
+  const [note, setNote] = useState("");
+  return (
+    <div
+      className="sd-backdrop"
+      onClick={(e) => {
+        if (e.target === e.currentTarget) onClose();
+      }}
+      style={{
+        position: "fixed",
+        inset: 0,
+        background: "rgba(10,13,18,0.6)",
+        backdropFilter: "blur(2px)",
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        zIndex: 50,
+        padding: 16,
+      }}
+    >
+      <div
+        className="sd-pop"
+        style={{
+          background: COLORS.surface,
+          backgroundImage: COLORS.bgGradient,
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 16,
+          padding: 22,
+          width: "100%",
+          maxWidth: 400,
+          maxHeight: "90dvh",
+          overflowY: "auto",
+          boxSizing: "border-box",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.45)",
+        }}
+      >
+        <div style={{ fontFamily: DISPLAY_FONT, fontSize: 20, fontWeight: 600, marginBottom: 16 }}>Add a line</div>
+        <input
+          className="sd-input"
+          placeholder="Title"
+          value={title}
+          onChange={(e) => setTitle(e.target.value)}
+          style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: 12, color: COLORS.text, fontSize: 16, marginBottom: 10, outline: "none", boxSizing: "border-box" }}
+        />
+        <CategoryPicker category={category} setCategory={setCategory} />
+        <input
+          className="sd-input"
+          placeholder="Quick note (optional)"
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.line}`, borderRadius: 10, padding: 12, color: COLORS.text, fontSize: 16, marginBottom: 18, outline: "none", boxSizing: "border-box" }}
+        />
+        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+          <button className="sd-btn" onClick={onClose} style={{ background: "none", border: `1px solid ${COLORS.line}`, color: COLORS.textDim, borderRadius: 9, padding: "10px 16px", cursor: "pointer" }}>
+            Cancel
+          </button>
+          <button
+            className="sd-btn"
+            onClick={() => {
+              if (title.trim()) onAdd({ title, category, note });
+            }}
+            style={{ background: COLORS.amber, color: "#1B2430", border: "none", borderRadius: 9, padding: "10px 18px", fontWeight: 600, cursor: "pointer" }}
+          >
+            Add
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function EditRow({ line, onSave, onCancel }) {
+  const [title, setTitle] = useState(line.title);
+  const [category, setCategory] = useState(line.category || "Build");
+  const [note, setNote] = useState(line.note || "");
+  return (
+    <div className="sd-fade-up">
+      <input
+        className="sd-input"
+        value={title}
+        onChange={(e) => setTitle(e.target.value)}
+        style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.line}`, borderRadius: 9, padding: 10, color: COLORS.text, fontSize: 16, marginBottom: 8, outline: "none", boxSizing: "border-box" }}
+      />
+      <CategoryPicker category={category} setCategory={setCategory} />
+      <input
+        className="sd-input"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        placeholder="Note"
+        style={{ width: "100%", background: COLORS.surface2, border: `1px solid ${COLORS.line}`, borderRadius: 9, padding: 10, color: COLORS.text, fontSize: 16, marginBottom: 8, outline: "none", boxSizing: "border-box" }}
+      />
+      <div style={{ display: "flex", gap: 8 }}>
+        <button className="sd-btn" onClick={onCancel} style={{ background: "none", border: `1px solid ${COLORS.line}`, color: COLORS.textDim, borderRadius: 7, padding: "8px 14px", fontSize: 12, cursor: "pointer" }}>
+          Cancel
+        </button>
+        <button
+          className="sd-btn"
+          onClick={() => {
+            if (title.trim()) onSave({ title, category, note });
+          }}
+          style={{ background: COLORS.amber, color: "#1B2430", border: "none", borderRadius: 7, padding: "8px 14px", fontSize: 12, fontWeight: 600, cursor: "pointer" }}
+        >
+          Save
+        </button>
+      </div>
+    </div>
+  );
+}
+
+const ACTION_ICONS = { TOUCHED: Check, COMPLETE: Flag, EDIT: Pencil, ARCHIVE: Archive };
+
+function LineRow({ line, index, isFirst, isEditing, onTouch, onComplete, onEdit, onArchive, onSave, onCancel }) {
+  const s = statusFor(line);
+  return (
+    <div
+      className="sd-fade-up sd-card"
+      style={{
+        padding: 15,
+        borderTop: isFirst ? "none" : `1px solid ${COLORS.lineSoft}`,
+        background: COLORS.surface,
+        animationDelay: `${Math.min(index, 8) * 0.04}s`,
+      }}
+    >
+      {isEditing ? (
+        <EditRow line={line} onSave={onSave} onCancel={onCancel} />
+      ) : (
+        <React.Fragment>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 10 }}>
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div style={{ fontSize: 15.5, fontWeight: 500, wordBreak: "break-word", letterSpacing: "-0.005em" }}>{line.title}</div>
+              {line.note && (
+                <div style={{ fontSize: 12.5, color: COLORS.textDim, marginTop: 3, wordBreak: "break-word", lineHeight: 1.4 }}>{line.note}</div>
+              )}
+            </div>
+            <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 5, flexShrink: 0 }}>
+              <span
+                key={s.label}
+                className="sd-flip"
+                style={{
+                  fontFamily: MONO_FONT,
+                  fontSize: 10,
+                  color: s.color,
+                  fontWeight: 600,
+                  letterSpacing: "0.04em",
+                  background: `${s.color}1A`,
+                  padding: "3px 7px",
+                  borderRadius: 4,
+                  display: "inline-block",
+                }}
+              >
+                {s.label}
+              </span>
+              <span style={{ fontFamily: MONO_FONT, fontSize: 10, color: COLORS.textFaint, letterSpacing: "0.04em" }}>
+                {(line.category || "").toUpperCase()}
+              </span>
+            </div>
+          </div>
+          <div className="sd-row-actions" style={{ display: "flex", gap: 7, marginTop: 11, flexWrap: "wrap" }}>
+            {[
+              ["TOUCHED", COLORS.green, onTouch],
+              ["COMPLETE", COLORS.amber, onComplete],
+              ["EDIT", COLORS.textDim, onEdit],
+              ["ARCHIVE", COLORS.textDim, onArchive],
+            ].map(([label, color, fn]) => {
+              const Icon = ACTION_ICONS[label];
+              return (
+                <button
+                  key={label}
+                  onClick={fn}
+                  style={{
+                    fontFamily: MONO_FONT,
+                    background: "none",
+                    border: `1px solid ${COLORS.line}`,
+                    color,
+                    borderRadius: 7,
+                    padding: "6px 10px",
+                    fontSize: 10,
+                    cursor: "pointer",
+                    display: "inline-flex",
+                    alignItems: "center",
+                    gap: 5,
+                  }}
+                >
+                  <Icon size={11} strokeWidth={2.2} />
+                  {label}
+                </button>
+              );
+            })}
+          </div>
+        </React.Fragment>
+      )}
+    </div>
+  );
+}
+
+function Board({ lines, setLines }) {
+  const [showCheckin, setShowCheckin] = useState(false);
+  const [showAdd, setShowAdd] = useState(false);
+  const [showArchived, setShowArchived] = useState(false);
+  const [editingId, setEditingId] = useState(null);
+
+  const commit = (updated) => {
+    setLines(updated);
+    saveLines(updated);
+  };
+
+  const touch = (id) => commit(lines.map((l) => (l.id === id ? { ...l, lastTouched: new Date().toISOString() } : l)));
+  const archive = (id) => commit(lines.map((l) => (l.id === id ? { ...l, archived: true } : l)));
+  const restore = (id) => commit(lines.map((l) => (l.id === id ? { ...l, archived: false } : l)));
+  const deleteForever = (id) => {
+    if (!window.confirm("Delete this line permanently? This can't be undone.")) return;
+    commit(lines.filter((l) => l.id !== id));
+  };
+  const complete = (id) =>
+    commit(lines.map((l) => (l.id === id ? { ...l, archived: true, completed: true, lastTouched: new Date().toISOString() } : l)));
+  const addLine = (l) => {
+    const newLine = {
+      id: "l" + Date.now(),
+      title: l.title,
+      category: l.category,
+      note: l.note,
+      lastTouched: null,
+      archived: false,
+      createdAt: new Date().toISOString(),
+    };
+    commit([...lines, newLine]);
+    setShowAdd(false);
+  };
+  const updateLine = (id, patch) => {
+    commit(lines.map((l) => (l.id === id ? { ...l, ...patch } : l)));
+    setEditingId(null);
+  };
+
+  const active = lines.filter((l) => !l.archived);
+  const archived = lines.filter((l) => l.archived);
+  const sorted = [...active].sort((a, b) => daysSince(b.lastTouched) - daysSince(a.lastTouched));
+
+  return (
+    <div
+      style={{
+        maxWidth: 560,
+        margin: "0 auto",
+        padding: "calc(28px + env(safe-area-inset-top,0px)) 16px calc(112px + env(safe-area-inset-bottom,0px))",
+        boxSizing: "border-box",
+      }}
+    >
+      <div className="sd-fade-up" style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", marginBottom: 5 }}>
+        <div style={{ fontFamily: DISPLAY_FONT, fontSize: 27, fontWeight: 600, letterSpacing: "-0.01em" }}>Siding</div>
+        <div style={{ fontFamily: MONO_FONT, fontSize: 11, color: COLORS.textFaint, letterSpacing: "0.04em" }}>
+          {active.length} {active.length === 1 ? "LINE" : "LINES"}
+        </div>
+      </div>
+      <div className="sd-fade-up" style={{ color: COLORS.textDim, fontSize: 14, marginBottom: 22, animationDelay: "0.04s" }}>
+        Departure board for your free time.
+      </div>
+
+      <div
+        className="sd-fade-up"
+        style={{
+          border: `1px solid ${COLORS.line}`,
+          borderRadius: 14,
+          overflow: "hidden",
+          marginBottom: 20,
+          boxShadow: "0 4px 16px rgba(0,0,0,0.2)",
+          animationDelay: "0.08s",
+        }}
+      >
+        {sorted.map((l, i) => (
+          <LineRow
+            key={l.id}
+            line={l}
+            index={i}
+            isFirst={i === 0}
+            isEditing={editingId === l.id}
+            onTouch={() => touch(l.id)}
+            onComplete={() => complete(l.id)}
+            onEdit={() => setEditingId(l.id)}
+            onArchive={() => archive(l.id)}
+            onSave={(patch) => updateLine(l.id, patch)}
+            onCancel={() => setEditingId(null)}
+          />
+        ))}
+        {sorted.length === 0 && (
+          <div style={{ padding: "26px 16px", color: COLORS.textDim, fontSize: 14, textAlign: "center" }}>
+            No active lines. Add one below, or check what's archived.
+          </div>
+        )}
+      </div>
+
+      <button
+        className="sd-btn"
+        onClick={() => setShowAdd(true)}
+        style={{
+          width: "100%",
+          background: "transparent",
+          border: `1.5px dashed ${COLORS.line}`,
+          color: COLORS.textDim,
+          borderRadius: 12,
+          padding: 14,
+          fontSize: 14,
+          cursor: "pointer",
+          marginBottom: 12,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          gap: 7,
+        }}
+      >
+        <Plus size={15} /> Add a line
+      </button>
+
+      {archived.length > 0 && (
+        <div style={{ marginBottom: 12 }}>
+          <button
+            className="sd-link-btn"
+            onClick={() => setShowArchived((s) => !s)}
+            style={{
+              fontFamily: MONO_FONT,
+              background: "none",
+              border: "none",
+              color: COLORS.textDim,
+              fontSize: 11,
+              cursor: "pointer",
+              padding: "6px 0",
+              display: "flex",
+              alignItems: "center",
+              gap: 5,
+              letterSpacing: "0.03em",
+            }}
+          >
+            {showArchived ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
+            ARCHIVED ({archived.length})
+          </button>
+          {showArchived && (
+            <div style={{ marginTop: 10, display: "flex", flexDirection: "column", gap: 8 }}>
+              {archived.map((l, i) => (
+                <div
+                  key={l.id}
+                  className="sd-archived-row"
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 10,
+                    border: `1px solid ${COLORS.lineSoft}`,
+                    borderRadius: 10,
+                    padding: "10px 14px",
+                    background: COLORS.surface,
+                    animationDelay: `${i * 0.03}s`,
+                  }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 14, opacity: 0.65, textDecoration: l.completed ? "line-through" : "none", wordBreak: "break-word" }}>
+                      {l.title}
+                    </div>
+                    {l.completed && (
+                      <div style={{ fontFamily: MONO_FONT, fontSize: 10, color: COLORS.green, marginTop: 2 }}>COMPLETED</div>
+                    )}
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <button
+                      className="sd-btn"
+                      onClick={() => restore(l.id)}
+                      style={{ background: "none", border: `1px solid ${COLORS.line}`, color: COLORS.amber, borderRadius: 7, padding: "6px 9px", cursor: "pointer", display: "flex", alignItems: "center" }}
+                      aria-label="Restore"
+                    >
+                      <RotateCcw size={12} />
+                    </button>
+                    <button
+                      className="sd-btn"
+                      onClick={() => deleteForever(l.id)}
+                      style={{ background: "none", border: `1px solid ${COLORS.line}`, color: COLORS.red, borderRadius: 7, padding: "6px 9px", cursor: "pointer", display: "flex", alignItems: "center" }}
+                      aria-label="Delete forever"
+                    >
+                      <Trash2 size={12} />
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
+      <div
+        style={{
+          position: "fixed",
+          bottom: "calc(16px + env(safe-area-inset-bottom,0px))",
+          left: "50%",
+          transform: "translateX(-50%)",
+          width: "calc(100% - 32px)",
+          maxWidth: 528,
+        }}
+      >
+        <button
+          className={active.length > 0 ? "sd-btn sd-cta" : "sd-btn"}
+          onClick={() => active.length > 0 && setShowCheckin(true)}
+          disabled={active.length === 0}
+          style={{
+            width: "100%",
+            background: active.length > 0 ? `linear-gradient(135deg, ${COLORS.amberSoft}, ${COLORS.amber})` : COLORS.surface2,
+            color: active.length > 0 ? "#1B2430" : COLORS.textDim,
+            border: "none",
+            borderRadius: 14,
+            padding: 17,
+            fontSize: 16,
+            fontWeight: 600,
+            cursor: active.length > 0 ? "pointer" : "not-allowed",
+          }}
+        >
+          {active.length > 0 ? "I'm free — what now?" : "Add a line to get started"}
+        </button>
+      </div>
+
+      {showCheckin && <CheckinPanel lines={active} onClose={() => setShowCheckin(false)} />}
+      {showAdd && <AddLineModal onAdd={addLine} onClose={() => setShowAdd(false)} />}
+    </div>
+  );
+}
+
+export default function Siding() {
+  const [ready, setReady] = useState(false);
+  const [lines, setLines] = useState([]);
+  const [onboarded, setOnboarded] = useState(false);
+
+  useEffect(() => {
+    (async () => {
+      const l = await loadLines();
+      const ob = await loadOnboarded();
+      setLines(l);
+      setOnboarded(ob);
+      setReady(true);
+    })();
+  }, []);
+
+  const containerStyle = {
+    background: COLORS.bg,
+    backgroundImage: COLORS.bgGradient,
+    color: COLORS.text,
+    fontFamily: SANS_FONT,
+    minHeight: "100dvh",
+  };
+
+  return (
+    <div style={containerStyle}>
+      <style>{GLOBAL_CSS}</style>
+      {!ready ? (
+        <div className="sd-fade-up" style={{ padding: 40, color: COLORS.textDim, fontFamily: MONO_FONT, fontSize: 13 }}>
+          loading...
+        </div>
+      ) : !onboarded ? (
+        <Onboard
+          onComplete={async (newLines) => {
+            setLines(newLines);
+            await saveLines(newLines);
+            await saveOnboarded(true);
+            setOnboarded(true);
+          }}
+        />
+      ) : (
+        <Board lines={lines} setLines={setLines} />
+      )}
+    </div>
+  );
+}
